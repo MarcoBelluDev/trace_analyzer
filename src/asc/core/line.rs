@@ -5,7 +5,7 @@ use crate::asc::core::signal_conversion;
 use crate::asc::types::{
     canframe::CanFrame, canlog::CanLog, message_log::MessageLog, signal_log::SignalLog,
 };
-use crate::dbc::types::database::DatabaseDBC;
+use dbc_editor::types::database::DatabaseDBC;
 
 // Example:
 // 0.016728 1 17334410x Rx d 8 3E 42 03 00 39 00 03 01

@@ -5,7 +5,7 @@ use std::io::{BufRead, BufReader};
 use crate::asc::core;
 use crate::asc::types::canlog::CanLog;
 use crate::asc::types::errors::AscParseError;
-use crate::dbc::types::database::DatabaseDBC;
+use dbc_editor::types::database::DatabaseDBC;
 
 /// Parses a Vector ASCII trace (`.asc`) file and builds a `CanLog`.
 ///

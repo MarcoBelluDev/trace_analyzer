@@ -1,5 +1,5 @@
 use crate::asc::types::signal_log::SignalLog;
-use crate::dbc::types::signal::SignalDBC;
+use dbc_editor::types::signal::SignalDBC;
 
 /// Convert a decoded raw integer into a `SignalLog` snapshot using the DBC signal metadata.
 ///
