@@ -44,7 +44,7 @@ impl Log {
         self.frames.is_empty()
     }
 
-    pub fn get_database_by_channel(&mut self, ch: u8) -> Option<&DatabaseDBC> {
+    pub fn get_database_by_channel(&self, ch: u8) -> Option<&DatabaseDBC> {
         if let Some(ch_info) = self.channel_map.get(&ch) {
             ch_info.database.as_ref()
         } else {

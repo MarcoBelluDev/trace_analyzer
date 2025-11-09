@@ -105,21 +105,27 @@ pub fn parse(line: &str, log: &mut Log) {
             }
         };
 
-        // Collect N payload tokens into a single space-separated String (no intermediate Vec)
+        // Collect N payload tokens into a single space-separated String while decoding bytes
         let mut data: String = String::with_capacity(frame.byte_length as usize * 3);
+        let mut payload_bytes: Vec<u8> = Vec::with_capacity(frame.byte_length as usize);
         for i in 0..frame.byte_length as usize {
-            match it.next() {
-                Some(tok) => {
-                    if i != 0 {
-                        data.push(' ');
-                    }
-                    data.push_str(tok);
-                }
+            let tok = match it.next() {
+                Some(v) => v,
                 None => return, // malformed: not enough data bytes
+            };
+            if i != 0 {
+                data.push(' ');
             }
+            data.push_str(tok);
+
+            let byte = match u8::from_str_radix(tok, 16) {
+                Ok(v) => v,
+                Err(_) => return,
+            };
+            payload_bytes.push(byte);
         }
 
-        frame.data = data.clone();
+        frame.data = data;
 
         // absolute time of the single CanFrame
         frame.absolute_time = if let Some(start_time) = log.absolute_time.value {
@@ -140,14 +146,8 @@ pub fn parse(line: &str, log: &mut Log) {
             frame.sig_keys = msg.signals.clone();
         }
 
-        // inserisci il frame nella lista dei frame e inserisci la chiave nella lista delle chiavi
-        let frame_key: FrameKey = log.frames.insert(frame.clone());
-        log.frame_by_file_order.push(frame_key);
-
-        // Parse payload bytes
-        let payload_bytes: Vec<u8> = parse_hex_bytes(&data);
         if let Some(dbc) = log.get_mut_database_by_channel(channel) {
-            for sig_key in frame.sig_keys {
+            for &sig_key in frame.sig_keys.iter() {
                 if let Some(signal) = dbc.get_sig_by_key_mut(sig_key) {
                     let raw: i64 = signal.extract_raw_i64(&payload_bytes);
                     let value: f64 = (raw as f64) * signal.factor + signal.offset;
@@ -158,6 +158,10 @@ pub fn parse(line: &str, log: &mut Log) {
                 }
             }
         };
+
+        // Inserisci il frame nella lista una volta terminata la decodifica
+        let frame_key: FrameKey = log.frames.insert(frame);
+        log.frame_by_file_order.push(frame_key);
     } // if frame.ftype == FrameType::Can
 }
 
@@ -218,13 +222,6 @@ fn push_3(buf: &mut String, v: u32) {
     buf.push(d1 as char);
     buf.push(d2 as char);
     buf.push(d3 as char);
-}
-
-/// Turn "3E 42 03 00 39 00 03 01" into Vec<u8>.
-pub(crate) fn parse_hex_bytes(data: &str) -> Vec<u8> {
-    data.split_ascii_whitespace()
-        .filter_map(|b| u8::from_str_radix(b, 16).ok())
-        .collect()
 }
 
 /// Normalize an ASC id token like "17334410x" or "12AB" to "0x17334410" / "0x12AB".
