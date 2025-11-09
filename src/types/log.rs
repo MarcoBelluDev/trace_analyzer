@@ -39,6 +39,11 @@ impl Log {
         *self = Log::default();
     }
 
+    /// Check if there are any frames present
+    pub fn is_empty(&self) -> bool {
+        self.frames.is_empty()
+    }
+
     pub fn get_database_by_channel(&mut self, ch: u8) -> Option<&DatabaseDBC> {
         if let Some(ch_info) = self.channel_map.get(&ch) {
             ch_info.database.as_ref()

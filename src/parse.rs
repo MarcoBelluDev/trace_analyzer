@@ -7,22 +7,16 @@ use crate::core;
 use crate::types::errors::AscParseError;
 use crate::types::frame::{Direction, Frame, FrameType};
 use crate::types::keys::FrameKey;
-use crate::types::log::{ChannelInfo, Log};
+use crate::types::log::Log;
 
 /// Parses a Vector ASCII trace (`.asc`) file and builds a `Log`.
-pub fn from_asc_file(path: &str, ch_map: &HashMap<u8, ChannelInfo>) -> Result<Log, AscParseError> {
+pub fn from_asc_file(path: &str, log: &mut Log) -> Result<(), AscParseError> {
     // check if provided file has .asc format
     if !path.ends_with(".asc") {
         return Err(AscParseError::InvalidExtension {
             path: path.to_string(),
         });
     }
-
-    // initialize Log and all the helper needed for its internal fields
-    let mut log: Log = Log {
-        channel_map: ch_map.clone(),
-        ..Default::default()
-    };
 
     // temporary registry: (name, channel) -> Signal index
     let mut found_abs_time: bool = false;
@@ -49,7 +43,7 @@ pub fn from_asc_file(path: &str, ch_map: &HashMap<u8, ChannelInfo>) -> Result<Lo
             found_abs_time = true;
             continue; // skip abs_time check for rest of the line
         }
-        core::line::parse(&line, &mut log);
+        core::line::parse(&line, log);
     }
 
     // ---- Sorting ---- //
@@ -274,5 +268,5 @@ pub fn from_asc_file(path: &str, ch_map: &HashMap<u8, ChannelInfo>) -> Result<Lo
     });
     log.frame_by_can_comment = by_comment;
 
-    Ok(log)
+    Ok(())
 }
