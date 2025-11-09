@@ -42,6 +42,22 @@ impl Frame {
         *self = Frame::default();
     }
 
+    pub fn timestamp_to_string(&self) -> String {
+        format!("{}", self.timestamp)
+    }
+
+    pub fn channel_to_string(&self) -> String {
+        format!("{}", self.channel)
+    }
+
+    pub fn direction_to_string(&self) -> String {
+        self.direction.to_string()
+    }
+
+    pub fn length_to_string(&self) -> String {
+        format!("{}", self.byte_length)
+    }
+
     /// Return the CAN Protocol of the Frame
     pub fn protocol_to_string(&self) -> String {
         if self.byte_length <= 8 {
@@ -52,7 +68,7 @@ impl Frame {
     }
 
     /// Return the CAN Msg Name of the Frame
-    pub fn msg_name_to_string(&self, db: DatabaseDBC) -> String {
+    pub fn msg_name_to_string(&self, db: &DatabaseDBC) -> String {
         if let Some(msg) = db.get_message_by_key(self.msg_key) {
             msg.name.clone()
         } else {
@@ -61,7 +77,7 @@ impl Frame {
     }
 
     /// Return the CAN Msg Name of the Frame
-    pub fn msg_comment_to_string(&self, db: DatabaseDBC) -> String {
+    pub fn msg_comment_to_string(&self, db: &DatabaseDBC) -> String {
         if let Some(msg) = db.get_message_by_key(self.msg_key) {
             msg.comment.clone()
         } else {
@@ -70,7 +86,7 @@ impl Frame {
     }
 
     /// Return the CAN Msg Name of the Frame
-    pub fn tx_node_name_to_string(&self, db: DatabaseDBC) -> String {
+    pub fn tx_node_name_to_string(&self, db: &DatabaseDBC) -> String {
         if let Some(node) = db.get_node_by_key(self.tx_node_key) {
             node.name.clone()
         } else {

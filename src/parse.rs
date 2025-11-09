@@ -11,6 +11,9 @@ use crate::types::log::Log;
 
 /// Parses a Vector ASCII trace (`.asc`) file and builds a `Log`.
 pub fn from_asc_file(path: &str, log: &mut Log) -> Result<(), AscParseError> {
+    // clear frames
+    log.clear_frames();
+
     // check if provided file has .asc format
     if !path.ends_with(".asc") {
         return Err(AscParseError::InvalidExtension {

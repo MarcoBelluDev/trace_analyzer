@@ -39,6 +39,25 @@ impl Log {
         *self = Log::default();
     }
 
+    pub fn clear_frames(&mut self) {
+        self.frames.clear();
+
+        // --- Order Complete "views"  ---
+        self.frame_by_file_order.clear();
+        self.frame_by_timestamp.clear();
+        self.frame_by_channel.clear();
+        self.frame_by_direction.clear();
+
+        // --- Can order Complete "views"  ---
+        self.frame_by_can_msg_name.clear();
+        self.frame_by_can_msg_id.clear();
+        self.frame_by_can_dlc.clear();
+        self.frame_by_can_protocol.clear();
+        self.frame_by_can_sender_node.clear();
+        self.frame_by_can_data.clear();
+        self.frame_by_can_comment.clear();
+    }
+
     /// Check if there are any frames present
     pub fn is_empty(&self) -> bool {
         self.frames.is_empty()
@@ -56,6 +75,10 @@ impl Log {
         self.channel_map
             .get_mut(&ch)
             .and_then(|ch_info| ch_info.database.as_mut())
+    }
+
+    pub fn get_frame_by_key(&self, frame_key: &FrameKey) -> Option<&Frame> {
+        self.frames.get(*frame_key)
     }
 }
 

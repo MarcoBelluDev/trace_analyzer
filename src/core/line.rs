@@ -1,4 +1,5 @@
 use chrono::{Datelike, Duration, NaiveDateTime, Timelike};
+use dbc_editor::types::database::{DatabaseDBC, MessageKey};
 
 use crate::types::frame::{Direction, Frame, FrameType};
 use crate::types::keys::FrameKey;
@@ -138,11 +139,13 @@ pub fn parse(line: &str, log: &mut Log) {
 
         // If a DBC is available for this channel, try to decode
         if let Some(dbc) = log.get_database_by_channel(channel)
-            && let Some(msg_key) = dbc.get_msg_key_by_id(id)
+            && let Some(msg_key) = resolve_msg_key_for_id(dbc, id)
             && let Some(msg) = dbc.get_message_by_key(msg_key)
         {
             frame.msg_key = msg_key;
-            frame.tx_node_key = msg.sender_nodes[0];
+            if let Some(&node_key) = msg.sender_nodes.first() {
+                frame.tx_node_key = node_key;
+            }
             frame.sig_keys = msg.signals.clone();
         }
 
@@ -233,5 +236,23 @@ fn parse_id_u32(id_token: &str) -> Option<u32> {
     } else {
         s
     };
-    u32::from_str_radix(s, 16).ok()
+
+    // Prefer hexadecimal interpretation (Vector default). If it overflows or fails, retry as decimal.
+    match u32::from_str_radix(s, 16) {
+        Ok(value) => Some(value),
+        Err(_) => s.parse::<u32>().ok(),
+    }
+}
+
+const CAN_STD_MAX_ID: u32 = 0x7FF;
+const CAN_EFF_FLAG: u32 = 0x8000_0000;
+
+fn resolve_msg_key_for_id(dbc: &DatabaseDBC, id: u32) -> Option<MessageKey> {
+    dbc.get_msg_key_by_id(id).or_else(|| {
+        if id > CAN_STD_MAX_ID {
+            dbc.get_msg_key_by_id(id | CAN_EFF_FLAG)
+        } else {
+            None
+        }
+    })
 }

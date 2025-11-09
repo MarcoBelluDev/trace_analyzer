@@ -247,7 +247,7 @@ dependencies = [
 
 [[package]]
 name = "trace_analyzer"
-version = "1.7.2"
+version = "1.7.3"
 dependencies = [
  "chrono",
  "dbc_editor",
