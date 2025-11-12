@@ -17,13 +17,13 @@ pub struct Log {
     /// All parsed frames in file order.
     pub frames: SlotMap<FrameKey, Frame>,
 
-    // --- Order Complete "views"  ---
+    // --- All Frames Order by generic parameters  ---
     pub frame_by_file_order: Vec<FrameKey>,
     pub frame_by_timestamp: Vec<FrameKey>,
     pub frame_by_channel: Vec<FrameKey>,
     pub frame_by_direction: Vec<FrameKey>,
 
-    // --- Can order Complete "views"  ---
+    // ---  All Frames Order by CAN parameters   ---
     pub frame_by_can_msg_name: Vec<FrameKey>,
     pub frame_by_can_msg_id: Vec<FrameKey>,
     pub frame_by_can_dlc: Vec<FrameKey>,
@@ -31,6 +31,20 @@ pub struct Log {
     pub frame_by_can_sender_node: Vec<FrameKey>,
     pub frame_by_can_data: Vec<FrameKey>,
     pub frame_by_can_comment: Vec<FrameKey>,
+
+    // --- ID-Channel Order by generic parameters  ---
+    pub id_chn_by_timestamp: Vec<FrameKey>,
+    pub id_chn_by_channel: Vec<FrameKey>,
+    pub id_chn_by_direction: Vec<FrameKey>,
+
+    // --- ID-Channel Order by CAN parameters  ---
+    pub id_chn_by_can_msg_name: Vec<FrameKey>,
+    pub id_chn_by_can_msg_id: Vec<FrameKey>,
+    pub id_chn_by_can_dlc: Vec<FrameKey>,
+    pub id_chn_by_can_protocol: Vec<FrameKey>,
+    pub id_chn_by_can_sender_node: Vec<FrameKey>,
+    pub id_chn_by_can_data: Vec<FrameKey>,
+    pub id_chn_by_can_comment: Vec<FrameKey>,
 }
 
 impl Log {
@@ -42,13 +56,13 @@ impl Log {
     pub fn clear_frames(&mut self) {
         self.frames.clear();
 
-        // --- Order Complete "views"  ---
+        // --- All Frames Order by generic parameters  ---
         self.frame_by_file_order.clear();
         self.frame_by_timestamp.clear();
         self.frame_by_channel.clear();
         self.frame_by_direction.clear();
 
-        // --- Can order Complete "views"  ---
+        // ---  All Frames Order by CAN parameters   ---
         self.frame_by_can_msg_name.clear();
         self.frame_by_can_msg_id.clear();
         self.frame_by_can_dlc.clear();
@@ -56,6 +70,20 @@ impl Log {
         self.frame_by_can_sender_node.clear();
         self.frame_by_can_data.clear();
         self.frame_by_can_comment.clear();
+
+        // --- ID-Channel Order by generic parameters  ---
+        self.id_chn_by_timestamp.clear();
+        self.id_chn_by_channel.clear();
+        self.id_chn_by_direction.clear();
+
+        // --- ID-Channel Order by CAN parameters  ---
+        self.id_chn_by_can_msg_name.clear();
+        self.id_chn_by_can_msg_id.clear();
+        self.id_chn_by_can_dlc.clear();
+        self.id_chn_by_can_protocol.clear();
+        self.id_chn_by_can_sender_node.clear();
+        self.id_chn_by_can_data.clear();
+        self.id_chn_by_can_comment.clear();
     }
 
     /// Check if there are any frames present

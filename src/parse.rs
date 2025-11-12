@@ -75,9 +75,19 @@ pub fn from_asc_file(path: &str, log: &mut Log) -> Result<(), AscParseError> {
         target.extend(source.iter().copied());
     };
 
-    refill(&mut log.frame_by_timestamp, &base_keys);
-    log.frame_by_timestamp
-        .sort_by(|a, b| match (frames.get(*a), frames.get(*b)) {
+    let mut last_by_id_channel: HashMap<(u32, u8), FrameKey> = HashMap::new();
+    for key in base_keys.iter().copied() {
+        if let Some(frame) = frames.get(key)
+            && frame.ftype == FrameType::Can
+        {
+            last_by_id_channel.insert((frame.id, frame.channel), key);
+        }
+    }
+    let mut id_chn_keys: Vec<FrameKey> = last_by_id_channel.values().copied().collect();
+    id_chn_keys.sort_by(|a, b| fallback_cmp(a, b));
+
+    let sort_by_timestamp = |vec: &mut Vec<FrameKey>| {
+        vec.sort_by(|a, b| match (frames.get(*a), frames.get(*b)) {
             (Some(fa), Some(fb)) => {
                 let ts_ord: Ordering = cmp_f64(fa.timestamp, fb.timestamp);
                 if ts_ord == Ordering::Equal {
@@ -88,10 +98,10 @@ pub fn from_asc_file(path: &str, log: &mut Log) -> Result<(), AscParseError> {
             }
             _ => fallback_cmp(a, b),
         });
+    };
 
-    refill(&mut log.frame_by_channel, &base_keys);
-    log.frame_by_channel
-        .sort_by(|a, b| match (frames.get(*a), frames.get(*b)) {
+    let sort_by_channel = |vec: &mut Vec<FrameKey>| {
+        vec.sort_by(|a, b| match (frames.get(*a), frames.get(*b)) {
             (Some(fa), Some(fb)) => {
                 let ch_ord: Ordering = fa.channel.cmp(&fb.channel);
                 if ch_ord == Ordering::Equal {
@@ -107,15 +117,15 @@ pub fn from_asc_file(path: &str, log: &mut Log) -> Result<(), AscParseError> {
             }
             _ => fallback_cmp(a, b),
         });
+    };
 
-    refill(&mut log.frame_by_direction, &base_keys);
-    log.frame_by_direction.sort_by(|a, b| {
+    let sort_by_direction = |vec: &mut Vec<FrameKey>| {
         let rank = |dir: &Direction| match dir {
             Direction::Rx => 0_u8,
             Direction::Tx => 1_u8,
         };
 
-        match (frames.get(*a), frames.get(*b)) {
+        vec.sort_by(|a, b| match (frames.get(*a), frames.get(*b)) {
             (Some(fa), Some(fb)) => {
                 let dir_ord: Ordering = rank(&fa.direction).cmp(&rank(&fb.direction));
                 if dir_ord == Ordering::Equal {
@@ -130,18 +140,11 @@ pub fn from_asc_file(path: &str, log: &mut Log) -> Result<(), AscParseError> {
                 }
             }
             _ => fallback_cmp(a, b),
-        }
-    });
+        });
+    };
 
-    let can_keys: Vec<FrameKey> = base_keys
-        .iter()
-        .copied()
-        .filter(|key| matches!(frames.get(*key), Some(frame) if frame.ftype == FrameType::Can))
-        .collect();
-
-    refill(&mut log.frame_by_can_msg_name, &can_keys);
-    log.frame_by_can_msg_name
-        .sort_by(|a, b| match (frames.get(*a), frames.get(*b)) {
+    let sort_by_can_msg_name = |vec: &mut Vec<FrameKey>| {
+        vec.sort_by(|a, b| match (frames.get(*a), frames.get(*b)) {
             (Some(fa), Some(fb)) => {
                 let name_a: &str = channel_map
                     .get(&fa.channel)
@@ -164,10 +167,10 @@ pub fn from_asc_file(path: &str, log: &mut Log) -> Result<(), AscParseError> {
             }
             _ => fallback_cmp(a, b),
         });
+    };
 
-    refill(&mut log.frame_by_can_msg_id, &can_keys);
-    log.frame_by_can_msg_id
-        .sort_by(|a, b| match (frames.get(*a), frames.get(*b)) {
+    let sort_by_can_msg_id = |vec: &mut Vec<FrameKey>| {
+        vec.sort_by(|a, b| match (frames.get(*a), frames.get(*b)) {
             (Some(fa), Some(fb)) => {
                 let id_ord: Ordering = fa.id.cmp(&fb.id);
                 if id_ord == Ordering::Equal {
@@ -178,10 +181,10 @@ pub fn from_asc_file(path: &str, log: &mut Log) -> Result<(), AscParseError> {
             }
             _ => fallback_cmp(a, b),
         });
+    };
 
-    refill(&mut log.frame_by_can_dlc, &can_keys);
-    log.frame_by_can_dlc
-        .sort_by(|a, b| match (frames.get(*a), frames.get(*b)) {
+    let sort_by_can_dlc = |vec: &mut Vec<FrameKey>| {
+        vec.sort_by(|a, b| match (frames.get(*a), frames.get(*b)) {
             (Some(fa), Some(fb)) => {
                 let dlc_ord: Ordering = fa.byte_length.cmp(&fb.byte_length);
                 if dlc_ord == Ordering::Equal {
@@ -192,12 +195,12 @@ pub fn from_asc_file(path: &str, log: &mut Log) -> Result<(), AscParseError> {
             }
             _ => fallback_cmp(a, b),
         });
+    };
 
-    refill(&mut log.frame_by_can_protocol, &can_keys);
-    log.frame_by_can_protocol.sort_by(|a, b| {
+    let sort_by_can_protocol = |vec: &mut Vec<FrameKey>| {
         let protocol_rank = |frame: &Frame| -> u8 { if frame.byte_length <= 8 { 0 } else { 1 } };
 
-        match (frames.get(*a), frames.get(*b)) {
+        vec.sort_by(|a, b| match (frames.get(*a), frames.get(*b)) {
             (Some(fa), Some(fb)) => {
                 let pr_ord: Ordering = protocol_rank(fa).cmp(&protocol_rank(fb));
                 if pr_ord == Ordering::Equal {
@@ -212,12 +215,11 @@ pub fn from_asc_file(path: &str, log: &mut Log) -> Result<(), AscParseError> {
                 }
             }
             _ => fallback_cmp(a, b),
-        }
-    });
+        });
+    };
 
-    refill(&mut log.frame_by_can_sender_node, &can_keys);
-    log.frame_by_can_sender_node
-        .sort_by(|a, b| match (frames.get(*a), frames.get(*b)) {
+    let sort_by_can_sender_node = |vec: &mut Vec<FrameKey>| {
+        vec.sort_by(|a, b| match (frames.get(*a), frames.get(*b)) {
             (Some(fa), Some(fb)) => {
                 let node_a: &str = channel_map
                     .get(&fa.channel)
@@ -240,10 +242,10 @@ pub fn from_asc_file(path: &str, log: &mut Log) -> Result<(), AscParseError> {
             }
             _ => fallback_cmp(a, b),
         });
+    };
 
-    refill(&mut log.frame_by_can_data, &can_keys);
-    log.frame_by_can_data
-        .sort_by(|a, b| match (frames.get(*a), frames.get(*b)) {
+    let sort_by_can_data = |vec: &mut Vec<FrameKey>| {
+        vec.sort_by(|a, b| match (frames.get(*a), frames.get(*b)) {
             (Some(fa), Some(fb)) => {
                 let data_ord: Ordering = fa.data.cmp(&fb.data);
                 if data_ord == Ordering::Equal {
@@ -254,10 +256,10 @@ pub fn from_asc_file(path: &str, log: &mut Log) -> Result<(), AscParseError> {
             }
             _ => fallback_cmp(a, b),
         });
+    };
 
-    refill(&mut log.frame_by_can_comment, &can_keys);
-    log.frame_by_can_comment
-        .sort_by(|a, b| match (frames.get(*a), frames.get(*b)) {
+    let sort_by_can_comment = |vec: &mut Vec<FrameKey>| {
+        vec.sort_by(|a, b| match (frames.get(*a), frames.get(*b)) {
             (Some(fa), Some(fb)) => {
                 let comment_a: &str = channel_map
                     .get(&fa.channel)
@@ -280,6 +282,63 @@ pub fn from_asc_file(path: &str, log: &mut Log) -> Result<(), AscParseError> {
             }
             _ => fallback_cmp(a, b),
         });
+    };
+
+    refill(&mut log.frame_by_timestamp, &base_keys);
+    sort_by_timestamp(&mut log.frame_by_timestamp);
+    refill(&mut log.id_chn_by_timestamp, &id_chn_keys);
+    sort_by_timestamp(&mut log.id_chn_by_timestamp);
+
+    refill(&mut log.frame_by_channel, &base_keys);
+    sort_by_channel(&mut log.frame_by_channel);
+    refill(&mut log.id_chn_by_channel, &id_chn_keys);
+    sort_by_channel(&mut log.id_chn_by_channel);
+
+    refill(&mut log.frame_by_direction, &base_keys);
+    sort_by_direction(&mut log.frame_by_direction);
+    refill(&mut log.id_chn_by_direction, &id_chn_keys);
+    sort_by_direction(&mut log.id_chn_by_direction);
+
+    let can_keys: Vec<FrameKey> = base_keys
+        .iter()
+        .copied()
+        .filter(|key| matches!(frames.get(*key), Some(frame) if frame.ftype == FrameType::Can))
+        .collect();
+
+    refill(&mut log.frame_by_can_msg_name, &can_keys);
+    sort_by_can_msg_name(&mut log.frame_by_can_msg_name);
+    refill(&mut log.id_chn_by_can_msg_name, &id_chn_keys);
+    sort_by_can_msg_name(&mut log.id_chn_by_can_msg_name);
+
+    refill(&mut log.frame_by_can_msg_id, &can_keys);
+    sort_by_can_msg_id(&mut log.frame_by_can_msg_id);
+    refill(&mut log.id_chn_by_can_msg_id, &id_chn_keys);
+    sort_by_can_msg_id(&mut log.id_chn_by_can_msg_id);
+
+    refill(&mut log.frame_by_can_dlc, &can_keys);
+    sort_by_can_dlc(&mut log.frame_by_can_dlc);
+    refill(&mut log.id_chn_by_can_dlc, &id_chn_keys);
+    sort_by_can_dlc(&mut log.id_chn_by_can_dlc);
+
+    refill(&mut log.frame_by_can_protocol, &can_keys);
+    sort_by_can_protocol(&mut log.frame_by_can_protocol);
+    refill(&mut log.id_chn_by_can_protocol, &id_chn_keys);
+    sort_by_can_protocol(&mut log.id_chn_by_can_protocol);
+
+    refill(&mut log.frame_by_can_sender_node, &can_keys);
+    sort_by_can_sender_node(&mut log.frame_by_can_sender_node);
+    refill(&mut log.id_chn_by_can_sender_node, &id_chn_keys);
+    sort_by_can_sender_node(&mut log.id_chn_by_can_sender_node);
+
+    refill(&mut log.frame_by_can_data, &can_keys);
+    sort_by_can_data(&mut log.frame_by_can_data);
+    refill(&mut log.id_chn_by_can_data, &id_chn_keys);
+    sort_by_can_data(&mut log.id_chn_by_can_data);
+
+    refill(&mut log.frame_by_can_comment, &can_keys);
+    sort_by_can_comment(&mut log.frame_by_can_comment);
+    refill(&mut log.id_chn_by_can_comment, &id_chn_keys);
+    sort_by_can_comment(&mut log.id_chn_by_can_comment);
 
     Ok(())
 }
