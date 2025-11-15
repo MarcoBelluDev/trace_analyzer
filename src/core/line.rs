@@ -1,171 +1,200 @@
 use chrono::{Datelike, Duration, NaiveDateTime, Timelike};
 use dbc_editor::types::database::{DatabaseDBC, MessageKey};
+use smallvec::SmallVec;
 
 use crate::types::frame::{Direction, Frame, FrameType};
 use crate::types::keys::FrameKey;
 use crate::types::log::{ChannelType, Log};
 
-// Example:
-// 0.016728 1 17334410x Rx d 8 3E 42 03 00 39 00 03 01
-// 0.016728 1 17334410x Rx Name ECU d 8 3E 42 03 00 39 00 03 01
-pub fn parse(line: &str, log: &mut Log) {
-    // split line by whitespaces (ASCII only, faster than Unicode-aware split)
-    let mut it = line.split_ascii_whitespace();
+const MAX_CAN_PAYLOAD: usize = 64;
 
-    // Build the frame
-    let mut frame: Frame = Frame::default();
+pub struct LineParser {
+    data_buf: String,
+    payload_buf: SmallVec<[u8; MAX_CAN_PAYLOAD]>,
+}
 
-    // Timestamp
-    let ts_tok: &str = match it.next() {
-        Some(v) => v,
-        None => return,
-    };
-    let timestamp: f64 = match ts_tok.parse() {
-        Ok(v) => v,
-        Err(_) => return,
-    };
-
-    // Channel
-    let ch_tok: &str = match it.next() {
-        Some(v) => v,
-        None => return,
-    };
-    let channel: u8 = match ch_tok.parse::<u8>() {
-        Ok(v) => v,
-        Err(_) => return,
-    };
-
-    frame.timestamp = timestamp;
-    frame.channel = channel;
-    match log.channel_map.get(&channel) {
-        Some(ch_info) => match ch_info.tipo {
-            ChannelType::Can => frame.ftype = FrameType::Can,
-            ChannelType::Ethernet => frame.ftype = FrameType::Eth,
-        },
-        None => return,
+impl LineParser {
+    pub fn new() -> Self {
+        Self {
+            data_buf: String::with_capacity(24),
+            payload_buf: SmallVec::new(),
+        }
     }
 
-    // -------- Can Frame parsing ----------- //
-    if frame.ftype == FrameType::Can {
-        // id token (keep original string for the frame)
-        let id_tok: &str = match it.next() {
-            Some(v) => v,
-            None => {
-                frame.ftype = FrameType::ErrorFrame;
-                let frame_key: FrameKey = log.frames.insert(frame);
-                log.frame_by_file_order.push(frame_key);
-                return;
-            }
-        };
-        // Message Id e Id_Hex
-        let id: u32 = match parse_id_u32(id_tok) {
+    // Example:
+    // 0.016728 1 17334410x Rx d 8 3E 42 03 00 39 00 03 01
+    // 0.016728 1 17334410x Rx Name ECU d 8 3E 42 03 00 39 00 03 01
+    pub fn parse(&mut self, line: &str, log: &mut Log) {
+        // split line by whitespaces (ASCII only, faster than Unicode-aware split)
+        let mut it = line.split_ascii_whitespace();
+
+        // Build the frame
+        let mut frame: Frame = Frame::default();
+
+        // Timestamp
+        let ts_tok: &str = match it.next() {
             Some(v) => v,
             None => return,
         };
+        let timestamp: f64 = match ts_tok.parse() {
+            Ok(v) => v,
+            Err(_) => return,
+        };
 
-        frame.id = id;
-        frame.id_hex = id_tok.to_string();
+        // Channel
+        let ch_tok: &str = match it.next() {
+            Some(v) => v,
+            None => return,
+        };
+        let channel: u8 = match ch_tok.parse::<u8>() {
+            Ok(v) => v,
+            Err(_) => return,
+        };
 
-        // Direction
-        match it.next() {
-            Some(v) => match v {
-                "Tx" => frame.direction = Direction::Tx,
-                "Rx" => frame.direction = Direction::Rx,
-                _ => {
+        frame.timestamp = timestamp;
+        frame.channel = channel;
+        match log.channel_map.get(&channel) {
+            Some(ch_info) => match ch_info.tipo {
+                ChannelType::Can => frame.ftype = FrameType::Can,
+                ChannelType::Ethernet => frame.ftype = FrameType::Eth,
+            },
+            None => return,
+        }
+
+        // -------- Can Frame parsing ----------- //
+        if frame.ftype == FrameType::Can {
+            // id token (keep original string for the frame)
+            let id_tok: &str = match it.next() {
+                Some(v) => v,
+                None => {
                     frame.ftype = FrameType::ErrorFrame;
                     let frame_key: FrameKey = log.frames.insert(frame);
                     log.frame_by_file_order.push(frame_key);
                     return;
                 }
-            },
-            None => {
-                frame.ftype = FrameType::ErrorFrame;
-                let frame_key: FrameKey = log.frames.insert(frame);
-                log.frame_by_file_order.push(frame_key);
-                return;
-            }
-        };
-
-        // Scan forward to 'd' or 'D', then read byte length and payload tokens
-        let mut after_d: Option<&str> = None;
-        while let Some(tok) = it.next() {
-            if tok == "d" || tok == "D" {
-                after_d = it.next(); // next is byte length
-                break;
-            }
-        }
-
-        // Byte Length
-        frame.byte_length = match after_d.and_then(|s| s.parse().ok()) {
-            Some(v) => v,
-            None => {
-                frame.ftype = FrameType::ErrorFrame;
-                let frame_key: FrameKey = log.frames.insert(frame);
-                log.frame_by_file_order.push(frame_key);
-                return;
-            }
-        };
-
-        // Collect N payload tokens into a single space-separated String while decoding bytes
-        let mut data: String = String::with_capacity(frame.byte_length as usize * 3);
-        let mut payload_bytes: Vec<u8> = Vec::with_capacity(frame.byte_length as usize);
-        for i in 0..frame.byte_length as usize {
-            let tok = match it.next() {
+            };
+            // Message Id e Id_Hex
+            let id: u32 = match parse_id_u32(id_tok) {
                 Some(v) => v,
-                None => return, // malformed: not enough data bytes
+                None => return,
             };
-            if i != 0 {
-                data.push(' ');
-            }
-            data.push_str(tok);
 
-            let byte = match u8::from_str_radix(tok, 16) {
-                Ok(v) => v,
-                Err(_) => return,
+            frame.id = id;
+            frame.id_hex = id_tok.to_string();
+
+            // Direction
+            match it.next() {
+                Some(v) => match v {
+                    "Tx" => frame.direction = Direction::Tx,
+                    "Rx" => frame.direction = Direction::Rx,
+                    _ => {
+                        frame.ftype = FrameType::ErrorFrame;
+                        let frame_key: FrameKey = log.frames.insert(frame);
+                        log.frame_by_file_order.push(frame_key);
+                        return;
+                    }
+                },
+                None => {
+                    frame.ftype = FrameType::ErrorFrame;
+                    let frame_key: FrameKey = log.frames.insert(frame);
+                    log.frame_by_file_order.push(frame_key);
+                    return;
+                }
             };
-            payload_bytes.push(byte);
-        }
 
-        frame.data = data;
-
-        // absolute time of the single CanFrame
-        frame.absolute_time = if let Some(start_time) = log.absolute_time.value {
-            let delta_ms: i64 = (timestamp * 1000.0).round() as i64;
-            let abs_time_value: NaiveDateTime = start_time + Duration::milliseconds(delta_ms);
-            format_datetime_ymdhms_millis(abs_time_value)
-        } else {
-            seconds_to_hms_string(timestamp)
-        };
-
-        // If a DBC is available for this channel, try to decode
-        if let Some(dbc) = log.get_database_by_channel(channel)
-            && let Some(msg_key) = resolve_msg_key_for_id(dbc, id)
-            && let Some(msg) = dbc.get_message_by_key(msg_key)
-        {
-            frame.msg_key = msg_key;
-            if let Some(&node_key) = msg.sender_nodes.first() {
-                frame.tx_node_key = node_key;
-            }
-            frame.sig_keys = msg.signals.clone();
-        }
-
-        if let Some(dbc) = log.get_mut_database_by_channel(channel) {
-            for &sig_key in frame.sig_keys.iter() {
-                if let Some(signal) = dbc.get_sig_by_key_mut(sig_key) {
-                    let raw: i64 = signal.extract_raw_i64(&payload_bytes);
-                    let value: f64 = (raw as f64) * signal.factor + signal.offset;
-
-                    // Append a point to the corresponding SignalDBC time series
-                    signal.raws.push((timestamp, raw));
-                    signal.values.push((timestamp, value));
+            // Scan forward to 'd' or 'D', then read byte length and payload tokens
+            let mut after_d: Option<&str> = None;
+            while let Some(tok) = it.next() {
+                if tok == "d" || tok == "D" {
+                    after_d = it.next(); // next is byte length
+                    break;
                 }
             }
-        };
 
-        // Inserisci il frame nella lista una volta terminata la decodifica
-        let frame_key: FrameKey = log.frames.insert(frame);
-        log.frame_by_file_order.push(frame_key);
-    } // if frame.ftype == FrameType::Can
+            // Byte Length
+            frame.byte_length = match after_d.and_then(|s| s.parse().ok()) {
+                Some(v) => v,
+                None => {
+                    frame.ftype = FrameType::ErrorFrame;
+                    let frame_key: FrameKey = log.frames.insert(frame);
+                    log.frame_by_file_order.push(frame_key);
+                    return;
+                }
+            };
+
+            // Collect N payload tokens into a single space-separated String while decoding bytes
+            let payload_len: usize = frame.byte_length as usize;
+            self.data_buf.clear();
+            let needed_chars: usize = payload_len.saturating_mul(3);
+            if self.data_buf.capacity() < needed_chars {
+                self.data_buf
+                    .reserve(needed_chars - self.data_buf.capacity());
+            }
+            self.payload_buf.clear();
+            if self.payload_buf.capacity() < payload_len {
+                self.payload_buf
+                    .reserve(payload_len - self.payload_buf.capacity());
+            }
+
+            for i in 0..payload_len {
+                let tok = match it.next() {
+                    Some(v) => v,
+                    None => return, // malformed: not enough data bytes
+                };
+                if i != 0 {
+                    self.data_buf.push(' ');
+                }
+                self.data_buf.push_str(tok);
+
+                let byte = match u8::from_str_radix(tok, 16) {
+                    Ok(v) => v,
+                    Err(_) => return,
+                };
+                self.payload_buf.push(byte);
+            }
+
+            std::mem::swap(&mut frame.data, &mut self.data_buf);
+
+            // absolute time of the single CanFrame
+            frame.absolute_time = if let Some(start_time) = log.absolute_time.value {
+                let delta_ms: i64 = (timestamp * 1000.0).round() as i64;
+                let abs_time_value: NaiveDateTime = start_time + Duration::milliseconds(delta_ms);
+                format_datetime_ymdhms_millis(abs_time_value)
+            } else {
+                seconds_to_hms_string(timestamp)
+            };
+
+            // If a DBC is available for this channel, try to decode
+            if let Some(dbc) = log.get_database_by_channel(channel)
+                && let Some(msg_key) = resolve_msg_key_for_id(dbc, id)
+                && let Some(msg) = dbc.get_message_by_key(msg_key)
+            {
+                frame.msg_key = msg_key;
+                if let Some(&node_key) = msg.sender_nodes.first() {
+                    frame.tx_node_key = node_key;
+                }
+                frame.sig_keys = msg.signals.clone();
+            }
+
+            if let Some(dbc) = log.get_mut_database_by_channel(channel) {
+                let payload_bytes: &[u8] = &self.payload_buf;
+                for &sig_key in frame.sig_keys.iter() {
+                    if let Some(signal) = dbc.get_sig_by_key_mut(sig_key) {
+                        let raw: i64 = signal.extract_raw_i64(&payload_bytes);
+                        let value: f64 = (raw as f64) * signal.factor + signal.offset;
+
+                        // Append a point to the corresponding SignalDBC time series
+                        signal.raws.push((timestamp, raw));
+                        signal.values.push((timestamp, value));
+                    }
+                }
+            };
+
+            // Inserisci il frame nella lista una volta terminata la decodifica
+            let frame_key: FrameKey = log.frames.insert(frame);
+            log.frame_by_file_order.push(frame_key);
+        } // if frame.ftype == FrameType::Can
+    }
 }
 
 fn seconds_to_hms_string(seconds: f64) -> String {

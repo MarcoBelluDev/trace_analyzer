@@ -1,9 +1,11 @@
-use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 
+use ordered_float::OrderedFloat;
+
 use crate::core;
+use crate::core::line::LineParser;
 use crate::types::errors::AscParseError;
 use crate::types::frame::{Direction, Frame, FrameType};
 use crate::types::keys::FrameKey;
@@ -35,6 +37,8 @@ pub fn from_asc_file(path: &str, log: &mut Log) -> Result<(), AscParseError> {
         }
     };
 
+    let mut line_parser: LineParser = LineParser::new();
+
     // read .asc file line by line reusing the same buffer
     let mut line: String = String::new();
     loop {
@@ -54,11 +58,11 @@ pub fn from_asc_file(path: &str, log: &mut Log) -> Result<(), AscParseError> {
             found_abs_time = true;
             continue; // skip abs_time check for rest of the line
         }
-        core::line::parse(trimmed, log);
+        line_parser.parse(trimmed, log);
     }
 
     // ---- Sorting ---- //
-    let base_keys: Vec<FrameKey> = log.frame_by_file_order.clone();
+    let base_keys: &[FrameKey] = log.frame_by_file_order.as_slice();
     let order_index: HashMap<FrameKey, usize> = base_keys
         .iter()
         .enumerate()
@@ -66,17 +70,15 @@ pub fn from_asc_file(path: &str, log: &mut Log) -> Result<(), AscParseError> {
         .collect();
     let frames = &log.frames;
     let channel_map = &log.channel_map;
-    let cmp_f64 = |lhs: f64, rhs: f64| lhs.partial_cmp(&rhs).unwrap_or(Ordering::Equal);
-    let key_position = |key: &FrameKey| order_index.get(key).copied().unwrap_or(usize::MAX);
-    let fallback_cmp =
-        |lhs: &FrameKey, rhs: &FrameKey| -> Ordering { key_position(lhs).cmp(&key_position(rhs)) };
+    let fallback_index =
+        |key: FrameKey| -> usize { order_index.get(&key).copied().unwrap_or(usize::MAX) };
     let refill = |target: &mut Vec<FrameKey>, source: &[FrameKey]| {
         target.clear();
-        target.extend(source.iter().copied());
+        target.extend_from_slice(source);
     };
 
     let mut last_by_id_channel: HashMap<(u32, u8), FrameKey> = HashMap::new();
-    for key in base_keys.iter().copied() {
+    for &key in base_keys {
         if let Some(frame) = frames.get(key)
             && frame.ftype == FrameType::Can
         {
@@ -84,217 +86,165 @@ pub fn from_asc_file(path: &str, log: &mut Log) -> Result<(), AscParseError> {
         }
     }
     let mut id_chn_keys: Vec<FrameKey> = last_by_id_channel.values().copied().collect();
-    id_chn_keys.sort_by(|a, b| fallback_cmp(a, b));
+    id_chn_keys.sort_by_key(|key| fallback_index(*key));
+
+    let direction_rank = |dir: &Direction| match dir {
+        Direction::Rx => 0_u8,
+        Direction::Tx => 1_u8,
+    };
+
+    let protocol_rank = |frame: &Frame| -> u8 { if frame.byte_length <= 8 { 0 } else { 1 } };
 
     let sort_by_timestamp = |vec: &mut Vec<FrameKey>| {
-        vec.sort_by(|a, b| match (frames.get(*a), frames.get(*b)) {
-            (Some(fa), Some(fb)) => {
-                let ts_ord: Ordering = cmp_f64(fa.timestamp, fb.timestamp);
-                if ts_ord == Ordering::Equal {
-                    fallback_cmp(a, b)
-                } else {
-                    ts_ord
-                }
+        vec.sort_by_key(|key| {
+            let key = *key;
+            let fallback = fallback_index(key);
+            match frames.get(key) {
+                Some(frame) => (0_u8, OrderedFloat(frame.timestamp), fallback),
+                None => (1_u8, OrderedFloat(0.0), fallback),
             }
-            _ => fallback_cmp(a, b),
         });
     };
 
     let sort_by_channel = |vec: &mut Vec<FrameKey>| {
-        vec.sort_by(|a, b| match (frames.get(*a), frames.get(*b)) {
-            (Some(fa), Some(fb)) => {
-                let ch_ord: Ordering = fa.channel.cmp(&fb.channel);
-                if ch_ord == Ordering::Equal {
-                    let ts_ord: Ordering = cmp_f64(fa.timestamp, fb.timestamp);
-                    if ts_ord == Ordering::Equal {
-                        fallback_cmp(a, b)
-                    } else {
-                        ts_ord
-                    }
-                } else {
-                    ch_ord
-                }
+        vec.sort_by_key(|key| {
+            let key = *key;
+            let fallback = fallback_index(key);
+            match frames.get(key) {
+                Some(frame) => (0_u8, frame.channel, OrderedFloat(frame.timestamp), fallback),
+                None => (1_u8, u8::MAX, OrderedFloat(0.0), fallback),
             }
-            _ => fallback_cmp(a, b),
         });
     };
 
     let sort_by_direction = |vec: &mut Vec<FrameKey>| {
-        let rank = |dir: &Direction| match dir {
-            Direction::Rx => 0_u8,
-            Direction::Tx => 1_u8,
-        };
-
-        vec.sort_by(|a, b| match (frames.get(*a), frames.get(*b)) {
-            (Some(fa), Some(fb)) => {
-                let dir_ord: Ordering = rank(&fa.direction).cmp(&rank(&fb.direction));
-                if dir_ord == Ordering::Equal {
-                    let ts_ord: Ordering = cmp_f64(fa.timestamp, fb.timestamp);
-                    if ts_ord == Ordering::Equal {
-                        fallback_cmp(a, b)
-                    } else {
-                        ts_ord
-                    }
-                } else {
-                    dir_ord
-                }
+        vec.sort_by_key(|key| {
+            let key = *key;
+            let fallback = fallback_index(key);
+            match frames.get(key) {
+                Some(frame) => (
+                    0_u8,
+                    direction_rank(&frame.direction),
+                    OrderedFloat(frame.timestamp),
+                    fallback,
+                ),
+                None => (1_u8, u8::MAX, OrderedFloat(0.0), fallback),
             }
-            _ => fallback_cmp(a, b),
         });
     };
 
     let sort_by_can_msg_name = |vec: &mut Vec<FrameKey>| {
-        vec.sort_by(|a, b| match (frames.get(*a), frames.get(*b)) {
-            (Some(fa), Some(fb)) => {
-                let name_a: &str = channel_map
-                    .get(&fa.channel)
-                    .and_then(|info| info.database.as_ref())
-                    .and_then(|db| db.get_message_by_key(fa.msg_key))
-                    .map(|msg| msg.name.as_str())
-                    .unwrap_or("");
-                let name_b: &str = channel_map
-                    .get(&fb.channel)
-                    .and_then(|info| info.database.as_ref())
-                    .and_then(|db| db.get_message_by_key(fb.msg_key))
-                    .map(|msg| msg.name.as_str())
-                    .unwrap_or("");
-                let name_ord: Ordering = name_a.cmp(name_b);
-                if name_ord == Ordering::Equal {
-                    fallback_cmp(a, b)
-                } else {
-                    name_ord
-                }
-            }
-            _ => fallback_cmp(a, b),
+        vec.sort_by_key(|key| {
+            let key = *key;
+            let fallback = fallback_index(key);
+            let (rank, name) = frames
+                .get(key)
+                .and_then(|frame| {
+                    channel_map
+                        .get(&frame.channel)
+                        .and_then(|info| info.database.as_ref())
+                        .and_then(|db| db.get_message_by_key(frame.msg_key))
+                        .map(|msg| msg.name.as_str())
+                })
+                .map(|name| (0_u8, name))
+                .unwrap_or((1_u8, ""));
+            (rank, name, fallback)
         });
     };
 
     let sort_by_can_msg_id = |vec: &mut Vec<FrameKey>| {
-        vec.sort_by(|a, b| match (frames.get(*a), frames.get(*b)) {
-            (Some(fa), Some(fb)) => {
-                let id_ord: Ordering = fa.id.cmp(&fb.id);
-                if id_ord == Ordering::Equal {
-                    fallback_cmp(a, b)
-                } else {
-                    id_ord
-                }
+        vec.sort_by_key(|key| {
+            let key = *key;
+            let fallback = fallback_index(key);
+            match frames.get(key) {
+                Some(frame) => (0_u8, frame.id, fallback),
+                None => (1_u8, u32::MAX, fallback),
             }
-            _ => fallback_cmp(a, b),
         });
     };
 
     let sort_by_can_dlc = |vec: &mut Vec<FrameKey>| {
-        vec.sort_by(|a, b| match (frames.get(*a), frames.get(*b)) {
-            (Some(fa), Some(fb)) => {
-                let dlc_ord: Ordering = fa.byte_length.cmp(&fb.byte_length);
-                if dlc_ord == Ordering::Equal {
-                    fallback_cmp(a, b)
-                } else {
-                    dlc_ord
-                }
+        vec.sort_by_key(|key| {
+            let key = *key;
+            let fallback = fallback_index(key);
+            match frames.get(key) {
+                Some(frame) => (0_u8, frame.byte_length, fallback),
+                None => (1_u8, u16::MAX, fallback),
             }
-            _ => fallback_cmp(a, b),
         });
     };
 
     let sort_by_can_protocol = |vec: &mut Vec<FrameKey>| {
-        let protocol_rank = |frame: &Frame| -> u8 { if frame.byte_length <= 8 { 0 } else { 1 } };
-
-        vec.sort_by(|a, b| match (frames.get(*a), frames.get(*b)) {
-            (Some(fa), Some(fb)) => {
-                let pr_ord: Ordering = protocol_rank(fa).cmp(&protocol_rank(fb));
-                if pr_ord == Ordering::Equal {
-                    let dlc_ord: Ordering = fa.byte_length.cmp(&fb.byte_length);
-                    if dlc_ord == Ordering::Equal {
-                        fallback_cmp(a, b)
-                    } else {
-                        dlc_ord
-                    }
-                } else {
-                    pr_ord
-                }
+        vec.sort_by_key(|key| {
+            let key = *key;
+            let fallback = fallback_index(key);
+            match frames.get(key) {
+                Some(frame) => (0_u8, protocol_rank(frame), frame.byte_length, fallback),
+                None => (1_u8, u8::MAX, u16::MAX, fallback),
             }
-            _ => fallback_cmp(a, b),
         });
     };
 
     let sort_by_can_sender_node = |vec: &mut Vec<FrameKey>| {
-        vec.sort_by(|a, b| match (frames.get(*a), frames.get(*b)) {
-            (Some(fa), Some(fb)) => {
-                let node_a: &str = channel_map
-                    .get(&fa.channel)
-                    .and_then(|info| info.database.as_ref())
-                    .and_then(|db| db.get_node_by_key(fa.tx_node_key))
-                    .map(|node| node.name.as_str())
-                    .unwrap_or("");
-                let node_b: &str = channel_map
-                    .get(&fb.channel)
-                    .and_then(|info| info.database.as_ref())
-                    .and_then(|db| db.get_node_by_key(fb.tx_node_key))
-                    .map(|node| node.name.as_str())
-                    .unwrap_or("");
-                let node_ord: Ordering = node_a.cmp(node_b);
-                if node_ord == Ordering::Equal {
-                    fallback_cmp(a, b)
-                } else {
-                    node_ord
-                }
-            }
-            _ => fallback_cmp(a, b),
+        vec.sort_by_key(|key| {
+            let key = *key;
+            let fallback = fallback_index(key);
+            let (rank, name) = frames
+                .get(key)
+                .and_then(|frame| {
+                    channel_map
+                        .get(&frame.channel)
+                        .and_then(|info| info.database.as_ref())
+                        .and_then(|db| db.get_node_by_key(frame.tx_node_key))
+                        .map(|node| node.name.as_str())
+                })
+                .map(|name| (0_u8, name))
+                .unwrap_or((1_u8, ""));
+            (rank, name, fallback)
         });
     };
 
     let sort_by_can_data = |vec: &mut Vec<FrameKey>| {
-        vec.sort_by(|a, b| match (frames.get(*a), frames.get(*b)) {
-            (Some(fa), Some(fb)) => {
-                let data_ord: Ordering = fa.data.cmp(&fb.data);
-                if data_ord == Ordering::Equal {
-                    fallback_cmp(a, b)
-                } else {
-                    data_ord
-                }
+        vec.sort_by_key(|key| {
+            let key = *key;
+            let fallback = fallback_index(key);
+            match frames.get(key) {
+                Some(frame) => (0_u8, frame.data.as_str(), fallback),
+                None => (1_u8, "", fallback),
             }
-            _ => fallback_cmp(a, b),
         });
     };
 
     let sort_by_can_comment = |vec: &mut Vec<FrameKey>| {
-        vec.sort_by(|a, b| match (frames.get(*a), frames.get(*b)) {
-            (Some(fa), Some(fb)) => {
-                let comment_a: &str = channel_map
-                    .get(&fa.channel)
-                    .and_then(|info| info.database.as_ref())
-                    .and_then(|db| db.get_message_by_key(fa.msg_key))
-                    .map(|msg| msg.comment.as_str())
-                    .unwrap_or("");
-                let comment_b: &str = channel_map
-                    .get(&fb.channel)
-                    .and_then(|info| info.database.as_ref())
-                    .and_then(|db| db.get_message_by_key(fb.msg_key))
-                    .map(|msg| msg.comment.as_str())
-                    .unwrap_or("");
-                let comment_ord: Ordering = comment_a.cmp(comment_b);
-                if comment_ord == Ordering::Equal {
-                    fallback_cmp(a, b)
-                } else {
-                    comment_ord
-                }
-            }
-            _ => fallback_cmp(a, b),
+        vec.sort_by_key(|key| {
+            let key = *key;
+            let fallback = fallback_index(key);
+            let (rank, comment) = frames
+                .get(key)
+                .and_then(|frame| {
+                    channel_map
+                        .get(&frame.channel)
+                        .and_then(|info| info.database.as_ref())
+                        .and_then(|db| db.get_message_by_key(frame.msg_key))
+                        .map(|msg| msg.comment.as_str())
+                })
+                .map(|comment| (0_u8, comment))
+                .unwrap_or((1_u8, ""));
+            (rank, comment, fallback)
         });
     };
 
-    refill(&mut log.frame_by_timestamp, &base_keys);
+    refill(&mut log.frame_by_timestamp, base_keys);
     sort_by_timestamp(&mut log.frame_by_timestamp);
     refill(&mut log.id_chn_by_timestamp, &id_chn_keys);
     sort_by_timestamp(&mut log.id_chn_by_timestamp);
 
-    refill(&mut log.frame_by_channel, &base_keys);
+    refill(&mut log.frame_by_channel, base_keys);
     sort_by_channel(&mut log.frame_by_channel);
     refill(&mut log.id_chn_by_channel, &id_chn_keys);
     sort_by_channel(&mut log.id_chn_by_channel);
 
-    refill(&mut log.frame_by_direction, &base_keys);
+    refill(&mut log.frame_by_direction, base_keys);
     sort_by_direction(&mut log.frame_by_direction);
     refill(&mut log.id_chn_by_direction, &id_chn_keys);
     sort_by_direction(&mut log.id_chn_by_direction);

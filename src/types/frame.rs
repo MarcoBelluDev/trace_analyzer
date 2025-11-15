@@ -76,7 +76,7 @@ impl Frame {
         }
     }
 
-    /// Return the CAN Msg Name of the Frame
+    /// Return the CAN Msg Comment of the Frame
     pub fn msg_comment_to_string(&self, db: &DatabaseDBC) -> String {
         if let Some(msg) = db.get_message_by_key(self.msg_key) {
             msg.comment.clone()
@@ -85,7 +85,7 @@ impl Frame {
         }
     }
 
-    /// Return the CAN Msg Name of the Frame
+    /// Return the First Node sender of the message of the Frame
     pub fn tx_node_name_to_string(&self, db: &DatabaseDBC) -> String {
         if let Some(node) = db.get_node_by_key(self.tx_node_key) {
             node.name.clone()

@@ -1,6 +1,6 @@
 [package]
 name = "trace_analyzer"
-version = "1.7.4"
+version = "1.7.5"
 edition = "2024"
 authors = ["Marco Bellusci <marco.bellusci.dev@gmail.com>"]
 description = "Rust analyzer for can traces saved in .asc files"
@@ -15,3 +15,5 @@ thiserror = "2.0.17"
 chrono = "0.4.41"
 # dbc_editor = { path = "C:\\Users\\AXIGO0V\\OneDrive - Volkswagen AG\\03. Scripts Rust\\dbc_editor" }
 dbc_editor =  { path = "/Users/marcobellusci/Rust/dbc_editor" }
+smallvec = "1.13"
+ordered-float = "4.2"
